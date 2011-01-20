@@ -5,15 +5,65 @@
 # Copyright 2011 __MyCompanyName__. All rights reserved.
 
 
+#value-to pixel transformer
 
-class LinearTransform
+#...maybe name Transform is not good,,, ValueBounds, ValueWindow??
+class Transform
 
+	#transform value to the NSPoint. derived class should implement transformX, transformY
+	def transform(val)
+		if val.kind_of?(NSPoint)
+			return NSMakePoint(transformX(val.x), transformY(val.y))
+		end
+	end
+end
 
+class LinearTransform < Transform
+	def initialize
+		@axis_min_x  =  -1
+		@axis_max_x = 3
+		@axis_min_y = -1
+		@axis_max_y = 15
+	end
+	
+	def setBounds(rect)
+		@rect = rect
+		@axis_length_x = @axis_max_x - @axis_min_x
+		@axis_length_y = @axis_max_y - @axis_min_y
+		@scale_x = @rect.size.width / @axis_length_x
+		@scale_y = @rect.size.height / @axis_length_y
+		
+		@shift_x =  0 - @axis_min_x*@scale_x
+		@shift_y =  0 - @axis_min_y*@scale_y
+	end
+	
+	def x_min
+		@axis_min_x
+	end
+	
+	def x_max
+		@axis_max_x
+	end
+	
+	def y_min
+		@axis_min_y
+	end
+	
+	def y_max
+		@axis_max_y
+	end	
+	
+	
+	def transformX(x)
+		x * @scale_x + @shift_x
+	end
+	def transformY(y)
+		y * @scale_y + @shift_y
+	end
 end
 
 #Y log transform
-class LogTransform
-	
+class LogTransform < Transform
 	def initialize
 		puts "#{self.class.to_s}#initialize"
 		
@@ -75,12 +125,6 @@ class LogTransform
 		log_y*@scale_y + @shift_y
 	end
 	
-	def transform(val)
-		if val.kind_of?(NSPoint)
-			return NSMakePoint(transformX(val.x), transformY(val.y))
-		end
-	end
-
 end
 
 
@@ -97,42 +141,9 @@ class LogPlotView < NSView
 	def awakeFromNib()
 		puts "awakeFromNib"
 		@log = true
-		@axis_min_x  =  -1
-		@axis_max_x = 3
-		@axis_min_y = -1
-		@axis_max_y = 15
-		
-		@axis_length_x = @axis_max_x - @axis_min_x
-		@axis_length_y = @axis_max_y - @axis_min_y
-		
+
 		@logTransform = LogTransform.new
-		
-	end
-	
-	def calculateScale
-		@scale_x = self.bounds.size.width / @axis_length_x
-		@scale_y = self.bounds.size.height / @axis_length_y
-		
-		@shift_x =  0 - @axis_min_x*@scale_x
-		@shift_y =  0 - @axis_min_y*@scale_y
-	end
-	
-	def initialize
-		puts "Initialize"
-		
-	end
-	
-	def transformX(x)
-		x * @scale_x + @shift_x
-	end
-	def transformY(y)
-		y * @scale_y + @shift_y
-	end
-	
-	def transform(val)
-		if val.kind_of?(NSPoint)
-			return NSMakePoint(transformX(val.x), transformY(val.y))
-		end
+		@linearTransform = LinearTransform.new		
 	end
 	
 	def log?
@@ -146,14 +157,16 @@ class LogPlotView < NSView
 	end
 	
 	
-	def drawLineWithTransform(fromPoint, toPoint, color, lineWidth)
-		drawLine(transform(fromPoint), transform(toPoint), color, lineWidth)
+	def drawLineWithTransformLinear(fromPoint, toPoint, color, lineWidth)
+		newFromPoint = @linearTransform.transform(fromPoint)
+		newToPoint = @linearTransform.transform(toPoint)
+		drawLine(newFromPoint, newToPoint,color,lineWidth)
 	end
 	
-	def drawLineWithTransformLog(fromPoint, toPoint, color, lineWidht,dash=false)
+	def drawLineWithTransformLog(fromPoint, toPoint, color, lineWidth,dash=false)
 		newFromPoint = @logTransform.transform(fromPoint)
 		newToPoint = @logTransform.transform(toPoint)
-		drawLine(newFromPoint, newToPoint,color,lineWidht,dash)
+		drawLine(newFromPoint, newToPoint,color,lineWidth,dash)
 	end
 	
 	def drawLine(fromPoint, toPoint ,color, lineWidth, dash=false)
@@ -163,7 +176,7 @@ class LogPlotView < NSView
 		line.lineWidth = lineWidth
 		
 		if (dash)
-			#currently constant interval
+			#in case of dash, use fixed interval
 			line.setLineDash([5,2],count:2,phase:0)
 		end
 		
@@ -178,6 +191,7 @@ class LogPlotView < NSView
 	
 	def drawRect(rect)
 		
+		#draw the background
 		NSColor.whiteColor().set
 		NSRectFill(rect)
 		
@@ -216,41 +230,42 @@ class LogPlotView < NSView
 			firstMoved = false
 			(@logTransform.x_min).step(@logTransform.x_max,0.1) do |x|
 				y = 10 ** x
-				px = @logTransform.transformX(x)
-				py = @logTransform.transformY(y)
+				
+				point = @logTransform.transform(NSMakePoint(x,y))
+
 				if (firstMoved)
-					path.lineToPoint(NSMakePoint(px,py))
+					path.lineToPoint(point)
 				else
-					path.moveToPoint(NSMakePoint(px, py))
+					path.moveToPoint(point)
 					firstMoved = true
 				end
 			end
 			NSColor.blueColor().set
 			path.stroke
-		else
-			calculateScale
-			#draw the axis
-			drawLineWithTransform( NSMakePoint(@axis_min_x,0), NSMakePoint(@axis_max_x,0), NSColor.blackColor(), 3.0)
-			drawLineWithTransform( NSMakePoint(0, @axis_min_y), NSMakePoint(0, @axis_max_y), NSColor.blackColor(),3.0)
 			
-			#draw grids
+		else
+			@linearTransform.setBounds(self.bounds)
+			
+			#draw the axis
+			drawLineWithTransformLinear( NSMakePoint(@linearTransform.x_min,0), NSMakePoint(@linearTransform.x_max,0), NSColor.blackColor(), 3.0)
+			drawLineWithTransformLinear( NSMakePoint(0, @linearTransform.y_min), NSMakePoint(0, @linearTransform.y_max), NSColor.blackColor(),3.0)
+			
+			#TODO:draw grids
 			
 			#draw actual line
 			path = NSBezierPath.bezierPath()
 			path.setLineWidth(2.0)
 			
 			firstMoved = false
-			-2.step(3, 0.1) do |x|
+			@linearTransform.x_min.step(@linearTransform.x_max, 0.1) do |x|
 				y = 10 ** x
 				
-				#px = x * @scale_x + @shift_x
-				#py = y * @scale_y + @shift_y
-				px = transformX(x)
-				py = transformY(y)
+				point = @linearTransform.transform(NSMakePoint(x,y))
+
 				if (firstMoved)
-					path.lineToPoint(NSMakePoint(px,py))
+					path.lineToPoint(point)
 				else
-					path.moveToPoint(NSMakePoint(px, py))
+					path.moveToPoint(point)
 					firstMoved = true
 				end
 			end
